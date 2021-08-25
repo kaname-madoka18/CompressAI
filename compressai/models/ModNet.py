@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from compressai.ans import BufferedRansEncoder, RansDecoder
 from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.layers import GDN, MaskedConv2d
-from priors import CompressionModel
+from compressai.models import CompressionModel
 
 from .utils import conv, deconv, update_registered_buffers
 

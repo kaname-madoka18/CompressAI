@@ -22,6 +22,7 @@ batchsize = 16
 num_workers = 4
 learning_rate = 1e-4
 out_dir = "checkpoint_scaled_hyper"
+checkpoint = None
 
 class RateDistortionLoss(nn.Module):
     """Custom rate distortion loss with a Lagrangian parameter."""
@@ -39,8 +40,11 @@ class RateDistortionLoss(nn.Module):
             (torch.log(likelihoods).sum() / (-math.log(2) * num_pixels))
             for likelihoods in output["likelihoods"].values()
         )
-        out["mse_loss"] = self.mse(output["x_hat"], target)
-        out["loss"] = output["lambda"] * 255 ** 2 * out["mse_loss"] + out["bpp_loss"]
+        out["mse_loss"] = sum(
+            output["lambda"][i] * self.mse(output["x_hat"][i], target[i])
+            for i in range(batchsize)
+        )
+        out["loss"] = 255 ** 2 * out["mse_loss"] + out["bpp_loss"]
 
         return out
 
@@ -91,18 +95,22 @@ def train_one_epoch(
             )
 
         if i % 1000 == 0:
-            torch.save(model.module.state_dict(), path.join(out_dir, "checkpoint_latest"))
+            torch.save(model.state_dict(), path.join(out_dir, "checkpoint_latest"))
 
 
 def main():
     if not path.isdir(out_dir):
         os.makedirs(out_dir)
 
-    train_data = ImageFolder("../DS/train", transform=transforms.ToTensor())
-    train_loader = DataLoader(train_data, batch_size=batchsize, shuffle=True, num_workers=num_workers)
 
-    whole = ScaleMod()
-    hyperprior = bmshj2018_hyperprior(5, pretrained=True)
+    train_transforms = transforms.Compose(
+        [transforms.RandomCrop((256, 256)), transforms.ToTensor()]
+    )
+    train_data = ImageFolder(path.join("..", "DS"), transform=train_transforms)
+    train_loader = DataLoader(train_data, batch_size=batchsize, shuffle=True, num_workers=num_workers, drop_last=True)
+
+    whole = ScaleMod(128, 192).cuda()
+    hyperprior = bmshj2018_hyperprior(5, pretrained=True).cuda()
     whole.g_a = hyperprior.g_a.cuda()
     whole.g_s = hyperprior.g_s.cuda()
     whole.h_a = hyperprior.h_a.cuda()
@@ -114,7 +122,7 @@ def main():
     for epoch in range(20):
         cur_lr = adjust_learning_rate(optimizer, epoch, learning_rate)
         train_one_epoch(whole, criterion, train_loader, optimizer, epoch, 5)
-        torch.save(whole.module.state_dict(), path.join(out_dir, f"checkpoint_epoch_{epoch}"))
+        torch.save(whole.state_dict(), path.join(out_dir, f"checkpoint_epoch_{epoch}"))
 
 if __name__ == "__main__":
     main()
