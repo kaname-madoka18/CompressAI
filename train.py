@@ -15,13 +15,12 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 from compressai.datasets import ImageFolder
-from compressai.zoo import bmshj2018_hyperprior
+from compressai.zoo import models
 from compressai.models.ModNet import *
 
 batchsize = 16
 num_workers = 4
 learning_rate = 1e-4
-out_dir = "checkpoint_scaled_hyper"
 checkpoint = None
 
 class RateDistortionLoss(nn.Module):
@@ -41,8 +40,8 @@ class RateDistortionLoss(nn.Module):
             for likelihoods in output["likelihoods"].values()
         )
         out["mse_loss"] = sum(
-            output["lambda"][i] * self.mse(output["x_hat"][i], target[i])
-            for i in range(batchsize)
+            output["lambda"][i] * self.mse(output["x_hat"][i], target[i]) / N
+            for i in range(N)
         )
         out["loss"] = 255 ** 2 * out["mse_loss"] + out["bpp_loss"]
 
@@ -62,7 +61,7 @@ def adjust_learning_rate(optimizer, epoch, init_lr):
 
 
 def train_one_epoch(
-        model, criterion, train_dataloader, optimizer, epoch, clip_max_norm
+        model, criterion, train_dataloader, optimizer, epoch, clip_max_norm, out_dir
 ):
     model.train()
     device = next(model.parameters()).device
@@ -97,32 +96,76 @@ def train_one_epoch(
         if i % 1000 == 0:
             torch.save(model.state_dict(), path.join(out_dir, "checkpoint_latest"))
 
+def get_pretrained_scale():
+    net = ScaleMod(128, 192).cuda()
+    hyperprior = models["bmshj2018-hyperprior"](5, pretrained=True).cuda()
+    net.g_a = hyperprior.g_a.cuda()
+    net.g_s = hyperprior.g_s.cuda()
+    net.h_a = hyperprior.h_a.cuda()
+    net.h_s = hyperprior.h_s.cuda()
+    return net, "checkpoint_scaled_hyper"
+
+def get_pretrained_joint():
+    net = JointMod(192, 320).cuda()
+    joint = models["mbt2018"](5, pretrained=True).cuda()
+    net.g_a = joint.g_a
+    net.g_s = joint.g_s
+    net.h_a = joint.h_a
+    net.h_s = joint.h_s
+    net.entropy_parameters = joint.entropy_parameters
+    net.context_prediction = joint.context_prediction
+    return net, "checkpoint_joint"
+
+def get_pretrained_cheng_anchor():
+    net = Cheng2020AnchorMod(192).cuda()
+    anchor = models["cheng2020-anchor"](4, pretrained=True).cuda()
+    net.g_a = anchor.g_a
+    net.g_s = anchor.g_s
+    net.h_a = anchor.h_a
+    net.h_s = anchor.h_s
+    net.entropy_parameters = anchor.entropy_parameters
+    net.context_prediction = anchor.context_prediction
+    return net, "checkpoint_cheng_anchor"
+
+def get_pretrained_cheng_attention():
+    net = Cheng2020AttentionMod(192).cuda()
+    attention = models["cheng2020-attn"](4, pretrained=True).cuda()
+    net.g_a = attention.g_a
+    net.g_s = attention.g_s
+    net.h_a = attention.h_a
+    net.h_s = attention.h_s
+    net.entropy_parameters = attention.entropy_parameters
+    net.context_prediction = attention.context_prediction
+    return net, "checkpoint_cheng_attention"
+
+def test_models():
+    get_pretrained_scale()
+    get_pretrained_cheng_attention()
+    get_pretrained_cheng_anchor()
+    get_pretrained_joint()
 
 def main():
-    if not path.isdir(out_dir):
-        os.makedirs(out_dir)
+    models2train = [get_pretrained_joint, get_pretrained_cheng_anchor, get_pretrained_cheng_attention]
+
+    for factory in models2train:
+        whole, out_dir = factory()
+        if not path.isdir(out_dir):
+            os.makedirs(out_dir)
+
+        train_transforms = transforms.Compose(
+            [transforms.RandomCrop((256, 256)), transforms.ToTensor()]
+        )
+        train_data = ImageFolder(path.join("..", "DS"), transform=train_transforms)
+        train_loader = DataLoader(train_data, batch_size=batchsize, shuffle=True, num_workers=num_workers, drop_last=True)
 
 
-    train_transforms = transforms.Compose(
-        [transforms.RandomCrop((256, 256)), transforms.ToTensor()]
-    )
-    train_data = ImageFolder(path.join("..", "DS"), transform=train_transforms)
-    train_loader = DataLoader(train_data, batch_size=batchsize, shuffle=True, num_workers=num_workers, drop_last=True)
+        criterion = RateDistortionLoss()
+        optimizer = torch.optim.Adam(whole.parameters(), lr = learning_rate)
 
-    whole = ScaleMod(128, 192).cuda()
-    hyperprior = bmshj2018_hyperprior(5, pretrained=True).cuda()
-    whole.g_a = hyperprior.g_a.cuda()
-    whole.g_s = hyperprior.g_s.cuda()
-    whole.h_a = hyperprior.h_a.cuda()
-    whole.h_s = hyperprior.h_s.cuda()
-
-    criterion = RateDistortionLoss()
-    optimizer = torch.optim.Adam(whole.parameters(), lr = learning_rate)
-
-    for epoch in range(20):
-        cur_lr = adjust_learning_rate(optimizer, epoch, learning_rate)
-        train_one_epoch(whole, criterion, train_loader, optimizer, epoch, 5)
-        torch.save(whole.state_dict(), path.join(out_dir, f"checkpoint_epoch_{epoch}"))
+        for epoch in range(1):
+            cur_lr = adjust_learning_rate(optimizer, epoch, learning_rate)
+            train_one_epoch(whole, criterion, train_loader, optimizer, epoch, 5, out_dir=out_dir)
+            torch.save(whole.state_dict(), path.join(out_dir, f"checkpoint_epoch_{epoch}"))
 
 if __name__ == "__main__":
     main()

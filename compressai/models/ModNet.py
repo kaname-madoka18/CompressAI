@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from compressai.ans import BufferedRansEncoder, RansDecoder
 from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.layers import GDN, MaskedConv2d
-from compressai.models import CompressionModel
+from compressai.models import *
 
 from .utils import conv, deconv, update_registered_buffers
 
@@ -176,3 +176,104 @@ class ScaleMod(CompressionModel):
             "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
             "lambda": lambda_info
         }
+
+
+class JointMod(JointAutoregressiveHierarchicalPriors):
+    def __init__(self, N=192, M=192, **kwargs):
+        super(JointMod, self).__init__(N, M, **kwargs)
+        self.modnet1 = Modnet(M, 100)
+        self.modnet2 = Modnet(M, 100)
+
+    def forward(self, x):
+        b = x.size()[0]
+        lambda_info = torch.rand((b, 1), device="cuda") / 5
+
+        y = self.g_a(x)
+        y = self.modnet1(y, lambda_info)
+        y = self.modnet2(y, lambda_info)
+        z = self.h_a(y)
+        z_hat, z_likelihoods = self.entropy_bottleneck(z)
+        params = self.h_s(z_hat)
+
+        y_hat = self.gaussian_conditional.quantize(
+            y, "noise" if self.training else "dequantize"
+        )
+        ctx_params = self.context_prediction(y_hat)
+        gaussian_params = self.entropy_parameters(
+            torch.cat((params, ctx_params), dim=1)
+        )
+        scales_hat, means_hat = gaussian_params.chunk(2, 1)
+        _, y_likelihoods = self.gaussian_conditional(y, scales_hat, means=means_hat)
+        x_hat = self.g_s(y_hat)
+
+        return {
+            "x_hat": x_hat,
+            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
+            "lambda": lambda_info
+        }
+
+
+class Cheng2020AnchorMod(Cheng2020Anchor):
+    def __init__(self, N, **kwargs):
+        super(Cheng2020AnchorMod, self).__init__(N, **kwargs)
+
+        self.modnet1 = Modnet(N, 100)
+        self.modnet2 = Modnet(N, 100)
+
+    def forward(self, x):
+        b = x.size()[0]
+        lambda_info = torch.rand((b, 1), device="cuda") / 5
+
+        y = self.g_a(x)
+        y = self.modnet1(y, lambda_info)
+        y = self.modnet2(y, lambda_info)
+        z = self.h_a(y)
+        z_hat, z_likelihoods = self.entropy_bottleneck(z)
+        params = self.h_s(z_hat)
+
+        y_hat = self.gaussian_conditional.quantize(
+            y, "noise" if self.training else "dequantize"
+        )
+        ctx_params = self.context_prediction(y_hat)
+        gaussian_params = self.entropy_parameters(
+            torch.cat((params, ctx_params), dim=1)
+        )
+        scales_hat, means_hat = gaussian_params.chunk(2, 1)
+        _, y_likelihoods = self.gaussian_conditional(y, scales_hat, means=means_hat)
+        x_hat = self.g_s(y_hat)
+
+        return {
+            "x_hat": x_hat,
+            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
+            "lambda": lambda_info
+        }
+
+
+class Cheng2020AttentionMod(Cheng2020AnchorMod):
+    def __init__(self, N, **kwargs):
+        super(Cheng2020AttentionMod, self).__init__(N, **kwargs)
+
+        self.g_a = nn.Sequential(
+            ResidualBlockWithStride(3, N, stride=2),
+            ResidualBlock(N, N),
+            ResidualBlockWithStride(N, N, stride=2),
+            AttentionBlock(N),
+            ResidualBlock(N, N),
+            ResidualBlockWithStride(N, N, stride=2),
+            ResidualBlock(N, N),
+            conv3x3(N, N, stride=2),
+            AttentionBlock(N),
+        )
+
+        self.g_s = nn.Sequential(
+            AttentionBlock(N),
+            ResidualBlock(N, N),
+            ResidualBlockUpsample(N, N, 2),
+            ResidualBlock(N, N),
+            ResidualBlockUpsample(N, N, 2),
+            AttentionBlock(N),
+            ResidualBlock(N, N),
+            ResidualBlockUpsample(N, N, 2),
+            ResidualBlock(N, N),
+            subpel_conv3x3(N, 3, 2),
+        )
