@@ -162,7 +162,7 @@ def main():
         criterion = RateDistortionLoss()
         optimizer = torch.optim.Adam(whole.parameters(), lr = learning_rate)
 
-        for epoch in range(1):
+        for epoch in range(20):
             cur_lr = adjust_learning_rate(optimizer, epoch, learning_rate)
             train_one_epoch(whole, criterion, train_loader, optimizer, epoch, 5, out_dir=out_dir)
             torch.save(whole.state_dict(), path.join(out_dir, f"checkpoint_epoch_{epoch}"))
