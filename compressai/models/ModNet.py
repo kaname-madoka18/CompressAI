@@ -160,7 +160,10 @@ class ScaleMod(CompressionModel):
 
     def forward(self, x):
         b = x.size()[0]
-        lambda_info = torch.rand((b, 1), device="cuda") / 5
+        if self.training:
+            lambda_info = torch.rand((b, 1), device="cuda") / 5
+        else:
+            lambda_info = torch.ones((b, 1), device="cuda") * self.lam
 
         y = self.g_a(x)
         y = self.modnet1(y, lambda_info)
@@ -186,7 +189,10 @@ class JointMod(JointAutoregressiveHierarchicalPriors):
 
     def forward(self, x):
         b = x.size()[0]
-        lambda_info = torch.rand((b, 1), device="cuda") / 5
+        if self.training:
+            lambda_info = torch.rand((b, 1), device="cuda") / 5
+        else:
+            lambda_info = torch.ones((b, 1), device="cuda") * self.lam
 
         y = self.g_a(x)
         y = self.modnet1(y, lambda_info)
@@ -222,7 +228,10 @@ class Cheng2020AnchorMod(Cheng2020Anchor):
 
     def forward(self, x):
         b = x.size()[0]
-        lambda_info = torch.rand((b, 1), device="cuda") / 5
+        if self.training:
+            lambda_info = torch.rand((b, 1), device="cuda") / 5
+        else:
+            lambda_info = torch.ones((b, 1), device="cuda") * self.lam
 
         y = self.g_a(x)
         y = self.modnet1(y, lambda_info)

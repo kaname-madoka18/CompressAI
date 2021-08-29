@@ -94,7 +94,10 @@ def train_one_epoch(
             )
 
         if i % 1000 == 0:
-            torch.save(model.state_dict(), path.join(out_dir, "checkpoint_latest"))
+            torch.save({
+                "epoch": epoch,
+                "state": model.state_dict()
+            }, path.join(out_dir, "checkpoint_latest"))
 
 def get_pretrained_scale():
     net = ScaleMod(128, 192).cuda()
@@ -151,6 +154,11 @@ def main():
         whole, out_dir = factory()
         if not path.isdir(out_dir):
             os.makedirs(out_dir)
+        for epoch in range(19, -1, -1):
+            if path.isfile(f"checkpoint_epoch_{epoch}"):
+                break
+        else:
+            epoch = -1
 
         train_transforms = transforms.Compose(
             [transforms.RandomCrop((256, 256)), transforms.ToTensor()]
@@ -162,10 +170,12 @@ def main():
         criterion = RateDistortionLoss()
         optimizer = torch.optim.Adam(whole.parameters(), lr = learning_rate)
 
-        for epoch in range(20):
+        epoch += 1
+        while epoch < 20:
             cur_lr = adjust_learning_rate(optimizer, epoch, learning_rate)
             train_one_epoch(whole, criterion, train_loader, optimizer, epoch, 5, out_dir=out_dir)
             torch.save(whole.state_dict(), path.join(out_dir, f"checkpoint_epoch_{epoch}"))
+            epoch += 1
 
 if __name__ == "__main__":
     main()

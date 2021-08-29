@@ -81,8 +81,58 @@ def test_epoch(test_dataloader, model, criterion):
 
     return bpp_loss.avg, psnr.avg
 
+def get_scale():
+    folder = "checkpoint_scaled_hyper"
+    net = ScaleMod(128, 192).cuda()
+    net.load_state_dict(torch.load(os.path.join(folder, "checkpoint_epoch_19")))
+    return net, "ScaleMod"
 
-def get_base_line():
+def get_joint():
+    folder = "checkpoint_joint"
+    net = JointMod(192, 320).cuda()
+    net.load_state_dict(torch.load(os.path.join(folder, "checkpoint_epoch_19")))
+    return net, "JointMod"
+
+def get_cheng_anchor():
+    folder = "checkpoint_cheng_anchor"
+    net = Cheng2020AnchorMod(192).cuda()
+    net.load_state_dict(torch.load(os.path.join(folder, "checkpoint_epoch_19")))
+    return net, "Cheng-AnchorMod"
+
+def get_cheng_attention():
+    folder = "checkpoint_cheng_attention"
+    net = Cheng2020AnchorMod(192).cuda()
+    net.load_state_dict(torch.load(os.path.join(folder, "checkpoint_epoch_19")))
+    return net, "Cheng-AttentionMod"
+
+def get_base_line(test_dataloader):
+    for net in models:
+        bpps = []
+        psnrs = []
+        ql = 6 if net[:2] == "ch" else 8
+        for quality in range(1, ql + 1):
+            model = models[net](quality, pretrained=True).cuda()
+            bpp, psnr = test_epoch(test_dataloader, model, RateDistortionLoss())
+            bpps.append(bpp)
+            psnrs.append(psnr)
+        plt.plot(bpps, psnrs, label=net)
+
+def eval_modnets(nets, test_dataloader):
+    for factory in nets:
+        net, name = factory()
+        net.eval()
+        lam = 2e-3
+        bpps = []
+        psnrs = []
+        while lam < 0.2:
+            net.lam = lam
+            bpp, psnr = test_epoch(test_dataloader, net, RateDistortionLoss())
+            bpps.append(bpp)
+            psnrs.append(psnr)
+            lam *= 2
+        plt.plot(bpps, psnrs, label=name)
+
+def main():
     data_dir = "assets"
     test_transforms = transforms.Compose(
         [transforms.ToTensor()]
@@ -97,26 +147,15 @@ def get_base_line():
         shuffle=False,
         pin_memory=(device == "cuda"),
     )
-    for net in models:
-        bpps = []
-        psnrs = []
-        ql = 6 if net[:2] == "ch" else 8
-        for quality in range(1, ql + 1):
-            model = models[net](quality, pretrained=True).cuda()
-            bpp, psnr = test_epoch(test_dataloader, model, RateDistortionLoss())
-            bpps.append(bpp)
-            psnrs.append(psnr)
-        plt.plot(bpps, psnrs, label=net)
+
+    get_base_line(test_dataloader)
+    nets = [get_scale, get_joint, get_cheng_anchor, get_cheng_attention]
+    eval_modnets(nets, test_dataloader)
+
     plt.legend()
     plt.xlabel("bpp")
     plt.ylabel("mse")
     plt.show()
-
-def eval_mod():
-    pass
-
-def main():
-    get_base_line()
 
 if __name__ == "__main__":
     main()
